@@ -11,21 +11,17 @@ from tqdm import tqdm
 from datasets import load_dataset
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 # Add the src directory to the path to import our modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from src.model.transformer import create_bert_like_model
 from src.compression.compression import compress_transformer
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a transformer model on the IMDB dataset')
-    parser.add_argument('--vocab-size', type=int, default=30000, help='Vocabulary size for the model')
-    parser.add_argument('--hidden-size', type=int, default=512, help='Hidden size of the transformer')
-    parser.add_argument('--num-layers', type=int, default=6, help='Number of transformer layers')
-    parser.add_argument('--num-heads', type=int, default=8, help='Number of attention heads')
+    parser.add_argument('--model-name', type=str, default='bert-base-uncased', help='Pretrained model name')
     parser.add_argument('--block-size', type=int, default=4, help='Block size for BCM compression')
     parser.add_argument('--batch-size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=3, help='Number of epochs to train')
@@ -154,9 +150,15 @@ def main():
     print("Loading IMDB dataset...")
     dataset = load_dataset("imdb")
     
-    # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", model_max_length=args.max_seq_length)
-    tokenizer.model_max_length = args.max_seq_length
+    # Initialize tokenizer and model
+    print(f"Loading pretrained model {args.model_name}...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        args.model_name,
+        num_labels=2,
+        output_attentions=False,
+        output_hidden_states=False,
+    )
     
     # Prepare dataset
     print("Tokenizing and preparing dataset...")
@@ -170,15 +172,6 @@ def main():
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    
-    # Create model
-    print(f"Creating{'compressed' if args.use_compressed else ''} transformer model...")
-    model = create_bert_like_model(
-        vocab_size=tokenizer.vocab_size,
-        hidden_size=args.hidden_size,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads
-    )
     
     # Apply compression if requested
     if args.use_compressed:

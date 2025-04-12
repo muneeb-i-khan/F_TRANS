@@ -1,0 +1,24 @@
+{
+  "original": {
+    "cycles": 12795108,
+    "latency_ms": 42.65036,
+    "energy_mj": 639.7554,
+    "throughput_tokens_per_sec": 3001.147000869395,
+    "dsp_utilization": 1.0,
+    "bram_utilization_mb": 130.96875,
+    "exceeds_resources": true
+  },
+  "compressed": {
+    "cycles": 182295552,
+    "latency_ms": 607.65184,
+    "energy_mj": 9114.7776,
+    "throughput_tokens_per_sec": 210.64693887868424,
+    "dsp_utilization": 1.0,
+    "bram_utilization_mb": 76.96875,
+    "exceeds_resources": true
+  },
+  "latency_improvement": 0.07018881075057717,
+  "energy_improvement": 0.07018881075057717,
+  "throughput_improvement": 0.07018881075057717,
+  "compression_rate": 4
+}

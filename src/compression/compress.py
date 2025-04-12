@@ -4,20 +4,17 @@ import os
 import argparse
 import time
 from pathlib import Path
+from transformers import AutoModelForSequenceClassification
 
 # Add the src directory to the path to import our modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from src.model.transformer import create_bert_like_model
 from src.compression.compression import compress_transformer
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Compress a transformer model using BCM')
-    parser.add_argument('--vocab-size', type=int, default=30000, help='Vocabulary size for the model')
-    parser.add_argument('--hidden-size', type=int, default=512, help='Hidden size of the transformer')
-    parser.add_argument('--num-layers', type=int, default=6, help='Number of transformer layers')
-    parser.add_argument('--num-heads', type=int, default=8, help='Number of attention heads')
+    parser.add_argument('--model-name', type=str, default='bert-base-uncased', help='Pretrained model name')
     parser.add_argument('--block-size', type=int, default=4, help='Block size for BCM compression')
     parser.add_argument('--output-dir', type=str, default='models', help='Directory to save models')
     
@@ -30,12 +27,12 @@ def main():
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
     
-    print(f"Creating a transformer model with {args.num_layers} layers, {args.hidden_size} hidden size, {args.num_heads} attention heads")
-    model = create_bert_like_model(
-        vocab_size=args.vocab_size,
-        hidden_size=args.hidden_size,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads
+    print(f"Loading pretrained model {args.model_name}...")
+    model = AutoModelForSequenceClassification.from_pretrained(
+        args.model_name,
+        num_labels=2,
+        output_attentions=False,
+        output_hidden_states=False,
     )
     
     # Count parameters in the original model
