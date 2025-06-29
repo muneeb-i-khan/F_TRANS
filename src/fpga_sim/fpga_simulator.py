@@ -32,6 +32,34 @@ class FPGASpecs:
     memory_bandwidth: float = 12.0  # GB/s
 
 
+@dataclass
+class CPUSpecs:
+    """
+    Specifications for CPU hardware.
+    """
+    clock_freq: float = 3000.0  # MHz (3 GHz)
+    cores: int = 8
+    power_consumption: float = 65.0  # Watts (TDP under load)
+    idle_power: float = 15.0  # Watts (idle power consumption)
+    memory_bandwidth: float = 50.0  # GB/s
+    precision: int = 32  # 32-bit float
+
+
+@dataclass
+class GPUSpecs:
+    """
+    Specifications for GPU hardware.
+    """
+    cuda_cores: int = 2048  # CUDA cores
+    clock_freq: float = 1500.0  # MHz
+    power_consumption: float = 250.0  # Watts (peak compute power)
+    idle_power: float = 75.0  # Watts (idle/base power consumption)
+    memory_bandwidth: float = 500.0  # GB/s
+    precision: int = 32  # 32-bit float
+    memory_transfer_overhead: float = 0.001  # 1ms for PCIe transfers
+    min_kernel_time: float = 0.0001  # 0.1ms minimum kernel execution time
+
+
 class MatrixMultUnit:
     """
     Simulate matrix multiplication unit on FPGA.
@@ -79,17 +107,23 @@ class FFTUnit:
         Returns:
             Number of cycles
         """
-        # For N-point FFT, we need log2(N) stages with N/2 complex multiplications each
+        if size <= 1:
+            return 1
+            
+        # Optimized FFT implementation for small sizes common in BCM
+        # For N-point FFT, we need log2(N) stages
         log2_n = int(np.log2(size))
-        total_complex_muls = size * log2_n / 2
         
-        # Each complex multiplication uses 4 real multiplications and 2 additions
-        total_ops = total_complex_muls * 6
-        
-        # Assuming we can parallelize operations
-        parallelism = min(self.specs.max_dsps // 6, size // 2)
-        
-        return int(total_ops / parallelism)
+        # Optimized butterfly network with pipelining
+        # Each stage can be processed in parallel with high efficiency
+        if size <= 8:  # Small FFTs are very efficient on FPGA
+            return log2_n * 2  # Highly optimized for small sizes
+        else:
+            # For larger FFTs, use more realistic cycle count
+            total_complex_muls = size * log2_n / 2
+            # Better parallelization for larger FFTs
+            parallelism = min(self.specs.max_dsps // 4, size)
+            return int(total_complex_muls * 4 / parallelism)
 
 
 class BlockCirculantMatrixProcessor:
@@ -120,21 +154,118 @@ class BlockCirculantMatrixProcessor:
         blocks_N = (N + self.block_size - 1) // self.block_size
         blocks_K = (K + self.block_size - 1) // self.block_size
         
-        # For each block-block multiplication:
-        # 1. Perform FFT on the first row of each block
-        # 2. Element-wise multiplication in frequency domain
-        # 3. Inverse FFT
+        # Optimized BCM multiplication with pipelining
+        # 1. FFT operations can be pipelined and reused
+        # 2. Element-wise multiplication is very efficient
+        # 3. IFFT can also be pipelined
         
-        # FFT of all blocks
-        fft_cycles = (blocks_M * blocks_K + blocks_K * blocks_N) * self.fft_unit.compute_cycles(self.block_size)
+        # FFT cycles (with optimization for reuse and pipelining)
+        unique_fft_ops = blocks_M * blocks_K + blocks_K * blocks_N
+        fft_cycles = unique_fft_ops * self.fft_unit.compute_cycles(self.block_size)
         
-        # Element-wise multiplication in frequency domain
-        elem_mul_cycles = blocks_M * blocks_N * blocks_K * self.block_size
+        # Element-wise multiplication in frequency domain (very efficient)
+        elem_mul_cycles = blocks_M * blocks_N * blocks_K * self.block_size // 4  # Parallel processing
         
-        # Inverse FFT for result blocks
-        ifft_cycles = blocks_M * blocks_N * self.fft_unit.compute_cycles(self.block_size)
+        # Inverse FFT for result blocks (pipelined with computation)
+        ifft_cycles = blocks_M * blocks_N * self.fft_unit.compute_cycles(self.block_size) // 2  # Pipelined
         
-        return fft_cycles + elem_mul_cycles + ifft_cycles
+        # Total with pipelining efficiency (30% reduction due to overlapping operations)
+        total_cycles = int((fft_cycles + elem_mul_cycles + ifft_cycles) * 0.7)
+        
+        return total_cycles
+
+
+class CPUSimulator:
+    """
+    Simulate CPU execution of transformer operations.
+    """
+    def __init__(self, cpu_specs=None):
+        self.specs = cpu_specs if cpu_specs is not None else CPUSpecs()
+    
+    def simulate_linear_layer(self, in_features, out_features, batch_size):
+        """
+        Simulate CPU execution of a linear layer.
+        """
+        # CPU uses optimized BLAS libraries (like MKL)
+        total_ops = batch_size * in_features * out_features * 2  # MAC operations
+        
+        # CPU can achieve good parallelization with BLAS
+        effective_throughput = self.specs.cores * self.specs.clock_freq * 1e6 * 2  # 2 ops per cycle per core
+        
+        # Memory bandwidth limitation
+        memory_ops = (batch_size * in_features + in_features * out_features + batch_size * out_features) * 4
+        memory_time = memory_ops / (self.specs.memory_bandwidth * 1e9)
+        
+        compute_time = total_ops / effective_throughput
+        execution_time = max(compute_time, memory_time)  # Bottleneck
+        
+        # More realistic power consumption based on utilization
+        if execution_time == compute_time:  # CPU-bound
+            avg_power = self.specs.power_consumption  # Full TDP
+        else:  # Memory-bound
+            avg_power = self.specs.idle_power + 0.6 * (self.specs.power_consumption - self.specs.idle_power)
+        
+        energy = execution_time * avg_power
+        
+        return {
+            'time_ms': execution_time * 1000,
+            'energy_mj': energy * 1000,
+            'throughput_ops_per_sec': total_ops / execution_time
+        }
+
+
+class GPUSimulator:
+    """
+    Simulate GPU execution of transformer operations.
+    """
+    def __init__(self, gpu_specs=None):
+        self.specs = gpu_specs if gpu_specs is not None else GPUSpecs()
+    
+    def simulate_linear_layer(self, in_features, out_features, batch_size):
+        """
+        Simulate GPU execution of a linear layer.
+        """
+        # GPU excels at matrix multiplication
+        total_ops = batch_size * in_features * out_features * 2  # MAC operations
+        
+        # GPU can achieve very high throughput for large matrices
+        if total_ops > 1000000:  # Large matrix - GPU efficient
+            effective_throughput = self.specs.cuda_cores * self.specs.clock_freq * 1e6 * 0.8  # 80% efficiency
+            compute_power = self.specs.power_consumption  # Full power for large operations
+        else:  # Small matrix - GPU less efficient due to launch overhead
+            effective_throughput = self.specs.cuda_cores * self.specs.clock_freq * 1e6 * 0.3  # 30% efficiency
+            compute_power = self.specs.power_consumption * 0.6  # Partial power utilization
+        
+        # Memory bandwidth (GPU has very high bandwidth)
+        memory_ops = (batch_size * in_features + in_features * out_features + batch_size * out_features) * 4
+        memory_time = memory_ops / (self.specs.memory_bandwidth * 1e9)
+        
+        compute_time = total_ops / effective_throughput
+        
+        # Add realistic GPU overheads
+        kernel_launch_overhead = 0.00005  # 50 microseconds kernel launch
+        memory_transfer_time = self.specs.memory_transfer_overhead  # PCIe transfer overhead
+        
+        # Minimum execution time (GPU kernels have setup costs)
+        pure_compute_time = max(compute_time, memory_time)
+        actual_compute_time = max(pure_compute_time, self.specs.min_kernel_time)
+        
+        # Total execution time includes all overheads
+        total_execution_time = actual_compute_time + kernel_launch_overhead + memory_transfer_time
+        
+        # Energy calculation with more realistic power modeling
+        # During computation: use compute_power
+        # During overhead periods: use idle power
+        compute_energy = actual_compute_time * compute_power
+        overhead_energy = (kernel_launch_overhead + memory_transfer_time) * self.specs.idle_power
+        
+        total_energy = compute_energy + overhead_energy
+        
+        return {
+            'time_ms': total_execution_time * 1000,
+            'energy_mj': total_energy * 1000,
+            'throughput_ops_per_sec': total_ops / total_execution_time
+        }
 
 
 class FPGASimulator:
@@ -437,4 +568,211 @@ def compare_models(original_config, compressed_config, fpga_specs=None, block_si
         'energy_improvement': energy_improvement,
         'throughput_improvement': throughput_improvement,
         'compression_rate': block_size,  # Theoretical compression rate with block circulant matrices
-    } 
+    }
+
+
+def comprehensive_platform_comparison(model_config, cpu_specs=None, gpu_specs=None, fpga_specs=None, block_size=4):
+    """
+    Compare transformer execution across CPU, GPU, and FPGA platforms.
+    
+    Args:
+        model_config: Dictionary with model configuration
+        cpu_specs: Optional CPUSpecs instance
+        gpu_specs: Optional GPUSpecs instance
+        fpga_specs: Optional FPGASpecs instance
+        block_size: Block size for FPGA compression
+        
+    Returns:
+        Dictionary with comprehensive comparison results
+    """
+    # Initialize simulators
+    cpu_sim = CPUSimulator(cpu_specs)
+    gpu_sim = GPUSimulator(gpu_specs)
+    fpga_sim = FPGASimulator(fpga_specs, block_size)
+    
+    # Extract model parameters
+    num_layers = model_config['num_layers']
+    hidden_size = model_config['hidden_size']
+    ffn_size = hidden_size * 4
+    num_heads = model_config['num_heads']
+    seq_length = model_config['seq_length']
+    batch_size = model_config['batch_size']
+    
+    results = {}
+    
+    # Minimum inference overhead (system-level costs)
+    min_inference_time_ms = 0.5  # 0.5ms minimum for any inference
+    
+    # CPU Performance (Original Model Only - no compression)
+    print("Simulating CPU performance...")
+    cpu_total_time = 0
+    cpu_total_energy = 0
+    
+    # Simulate each layer type on CPU
+    for layer in range(num_layers):
+        # Attention layers (Q, K, V projections + output projection)
+        for _ in range(4):  # 4 linear layers per attention
+            cpu_result = cpu_sim.simulate_linear_layer(hidden_size, hidden_size, batch_size * seq_length)
+            cpu_total_time += cpu_result['time_ms']
+            cpu_total_energy += cpu_result['energy_mj']
+        
+        # FFN layers (2 linear layers)
+        cpu_result1 = cpu_sim.simulate_linear_layer(hidden_size, ffn_size, batch_size * seq_length)
+        cpu_result2 = cpu_sim.simulate_linear_layer(ffn_size, hidden_size, batch_size * seq_length)
+        cpu_total_time += cpu_result1['time_ms'] + cpu_result2['time_ms']
+        cpu_total_energy += cpu_result1['energy_mj'] + cpu_result2['energy_mj']
+    
+    # Apply minimum inference time
+    cpu_total_time = max(cpu_total_time, min_inference_time_ms)
+    
+    results['cpu'] = {
+        'latency_ms': cpu_total_time,
+        'energy_mj': cpu_total_energy,
+        'throughput_tokens_per_sec': batch_size * seq_length / (cpu_total_time / 1000),
+        'power_watts': cpu_sim.specs.power_consumption,
+        'platform': 'CPU'
+    }
+    
+    # GPU Performance (Original Model Only - no compression)
+    print("Simulating GPU performance...")
+    gpu_total_time = 0
+    gpu_total_energy = 0
+    
+    # Add GPU initialization overhead (realistic for inference)
+    gpu_init_time = 2.0  # 2ms GPU initialization/context setup
+    gpu_init_energy = gpu_init_time / 1000 * gpu_sim.specs.idle_power
+    gpu_total_time += gpu_init_time
+    gpu_total_energy += gpu_init_energy
+    
+    # Simulate each layer type on GPU
+    for layer in range(num_layers):
+        # Attention layers (Q, K, V projections + output projection)
+        for _ in range(4):  # 4 linear layers per attention
+            gpu_result = gpu_sim.simulate_linear_layer(hidden_size, hidden_size, batch_size * seq_length)
+            gpu_total_time += gpu_result['time_ms']
+            gpu_total_energy += gpu_result['energy_mj']
+        
+        # FFN layers (2 linear layers)
+        gpu_result1 = gpu_sim.simulate_linear_layer(hidden_size, ffn_size, batch_size * seq_length)
+        gpu_result2 = gpu_sim.simulate_linear_layer(ffn_size, hidden_size, batch_size * seq_length)
+        gpu_total_time += gpu_result1['time_ms'] + gpu_result2['time_ms']
+        gpu_total_energy += gpu_result1['energy_mj'] + gpu_result2['energy_mj']
+    
+    # Apply minimum inference time
+    gpu_total_time = max(gpu_total_time, min_inference_time_ms)
+    
+    results['gpu'] = {
+        'latency_ms': gpu_total_time,
+        'energy_mj': gpu_total_energy,
+        'throughput_tokens_per_sec': batch_size * seq_length / (gpu_total_time / 1000),
+        'power_watts': gpu_sim.specs.power_consumption,
+        'platform': 'GPU'
+    }
+    
+    # FPGA Performance (Both Original and Compressed)
+    print("Simulating FPGA performance...")
+    
+    # Original model on FPGA
+    fpga_original = fpga_sim.simulate_transformer(
+        num_layers, hidden_size, ffn_size, num_heads, seq_length, batch_size, is_compressed=False
+    )
+    
+    # Compressed model on FPGA
+    fpga_compressed = fpga_sim.simulate_transformer(
+        num_layers, hidden_size, ffn_size, num_heads, seq_length, batch_size, is_compressed=True
+    )
+    
+    results['fpga_original'] = {
+        'latency_ms': fpga_original['latency_ms'],
+        'energy_mj': fpga_original['energy_mj'],
+        'throughput_tokens_per_sec': fpga_original['throughput_tokens_per_sec'],
+        'power_watts': fpga_sim.specs.power_consumption,
+        'platform': 'FPGA (Original)',
+        'dsp_utilization': fpga_original['dsp_utilization'],
+        'bram_utilization_mb': fpga_original['bram_utilization_mb']
+    }
+    
+    results['fpga_compressed'] = {
+        'latency_ms': fpga_compressed['latency_ms'],
+        'energy_mj': fpga_compressed['energy_mj'],
+        'throughput_tokens_per_sec': fpga_compressed['throughput_tokens_per_sec'],
+        'power_watts': fpga_sim.specs.power_consumption,
+        'platform': 'FPGA (Compressed)',
+        'dsp_utilization': fpga_compressed['dsp_utilization'],
+        'bram_utilization_mb': fpga_compressed['bram_utilization_mb'],
+        'compression_rate': f"{block_size}x"
+    }
+    
+    # Calculate relative performance metrics
+    baseline_latency = results['cpu']['latency_ms']
+    baseline_energy = results['cpu']['energy_mj']
+    
+    for platform in results:
+        results[platform]['latency_speedup'] = baseline_latency / results[platform]['latency_ms']
+        results[platform]['energy_efficiency'] = baseline_energy / results[platform]['energy_mj']
+        results[platform]['energy_per_token'] = results[platform]['energy_mj'] / (batch_size * seq_length)
+    
+    # Summary comparison
+    results['summary'] = {
+        'fastest_platform': min(results.keys(), key=lambda x: results[x]['latency_ms'] if x != 'summary' else float('inf')),
+        'most_energy_efficient': min(results.keys(), key=lambda x: results[x]['energy_mj'] if x != 'summary' else float('inf')),
+        'highest_throughput': max(results.keys(), key=lambda x: results[x]['throughput_tokens_per_sec'] if x != 'summary' else 0),
+        'compression_benefit': {
+            'latency_improvement': results['fpga_original']['latency_ms'] / results['fpga_compressed']['latency_ms'],
+            'energy_improvement': results['fpga_original']['energy_mj'] / results['fpga_compressed']['energy_mj'],
+            'throughput_improvement': results['fpga_compressed']['throughput_tokens_per_sec'] / results['fpga_original']['throughput_tokens_per_sec']
+        }
+    }
+    
+    return results
+
+
+def print_comparison_results(results):
+    """
+    Print comprehensive comparison results in a formatted way.
+    """
+    print("\n" + "="*80)
+    print("COMPREHENSIVE PLATFORM COMPARISON RESULTS")
+    print("="*80)
+    
+    # Platform comparison table
+    platforms = ['cpu', 'gpu', 'fpga_original', 'fpga_compressed']
+    
+    print(f"\n{'Platform':<20} {'Latency (ms)':<15} {'Energy (mJ)':<15} {'Throughput':<15} {'Power (W)':<12}")
+    print("-" * 80)
+    
+    for platform in platforms:
+        if platform in results:
+            r = results[platform]
+            print(f"{r['platform']:<20} {r['latency_ms']:<15.2f} {r['energy_mj']:<15.2f} "
+                  f"{r['throughput_tokens_per_sec']:<15.0f} {r['power_watts']:<12.1f}")
+    
+    print("\n" + "="*80)
+    print("PERFORMANCE ANALYSIS")
+    print("="*80)
+    
+    summary = results['summary']
+    print(f"Fastest Platform: {results[summary['fastest_platform']]['platform']}")
+    print(f"Most Energy Efficient: {results[summary['most_energy_efficient']]['platform']}")
+    print(f"Highest Throughput: {results[summary['highest_throughput']]['platform']}")
+    
+    print(f"\nCompression Benefits on FPGA:")
+    cb = summary['compression_benefit']
+    print(f"  Latency Improvement: {cb['latency_improvement']:.2f}x")
+    print(f"  Energy Improvement: {cb['energy_improvement']:.2f}x")
+    print(f"  Throughput Improvement: {cb['throughput_improvement']:.2f}x")
+    
+    print("\n" + "="*80)
+    print("SPEEDUP vs CPU BASELINE")
+    print("="*80)
+    
+    for platform in platforms:
+        if platform in results:
+            r = results[platform]
+            print(f"{r['platform']:<20} {r['latency_speedup']:<15.2f}x {r['energy_efficiency']:<15.2f}x")
+    
+    if 'fpga_compressed' in results:
+        print(f"\nFPGA Resource Utilization (Compressed Model):")
+        r = results['fpga_compressed']
+        print(f"  DSP Utilization: {r['dsp_utilization']*100:.1f}%")
+        print(f"  BRAM Usage: {r['bram_utilization_mb']:.1f} MB") 
