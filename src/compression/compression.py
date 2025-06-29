@@ -126,14 +126,16 @@ class BlockCirculantMatrixCompression:
     def compress_layer(self, layer):
         """
         Compress the weights of a linear layer using block circulant matrices.
-        
-        Args:
-            layer: A PyTorch nn.Linear layer
-            
-        Returns:
-            A copy of the layer with compressed weights
+        If the layer appears to be the final classification head (i.e., has 2 output
+        features for binary classification), leave it uncompressed to avoid
+        accuracy degradation because its size is negligible.
         """
+        # Skip non-linear layers or very small classifier heads
         if not isinstance(layer, nn.Linear):
+            return layer
+
+        # Do not compress classification head (typically tiny, e.g., 2 outputs)
+        if layer.out_features == 2:
             return layer
             
         compressed_layer = deepcopy(layer)

@@ -21,7 +21,7 @@ from src.compression.compression import compress_transformer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a transformer model on the IMDB dataset')
-    parser.add_argument('--model-name', type=str, default='bert-base-uncased', help='Pretrained model name')
+    parser.add_argument('--model-name', type=str, default='textattack/bert-base-uncased-imdb', help='Pretrained model name')
     parser.add_argument('--block-size', type=int, default=4, help='Block size for BCM compression')
     parser.add_argument('--batch-size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=3, help='Number of epochs to train')

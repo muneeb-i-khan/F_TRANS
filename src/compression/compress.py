@@ -14,7 +14,7 @@ from src.compression.compression import compress_transformer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Compress a transformer model using BCM')
-    parser.add_argument('--model-name', type=str, default='bert-base-uncased', help='Pretrained model name')
+    parser.add_argument('--model-name', type=str, default='textattack/bert-base-uncased-imdb', help='Pretrained model name')
     parser.add_argument('--block-size', type=int, default=4, help='Block size for BCM compression')
     parser.add_argument('--output-dir', type=str, default='models', help='Directory to save models')
     

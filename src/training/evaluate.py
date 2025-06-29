@@ -19,7 +19,7 @@ from src.compression.compression import compress_transformer
 def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate a compressed transformer model on the IMDB dataset')
     parser.add_argument('--model-path', type=str, default='output/models/compressed_model.pt', help='Path to the compressed model')
-    parser.add_argument('--model-name', type=str, default='bert-base-uncased', help='Pretrained model name for tokenizer')
+    parser.add_argument('--model-name', type=str, default='textattack/bert-base-uncased-imdb', help='Pretrained model name for tokenizer')
     parser.add_argument('--batch-size', type=int, default=16, help='Batch size for evaluation')
     parser.add_argument('--max-seq-length', type=int, default=512, help='Maximum sequence length')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
