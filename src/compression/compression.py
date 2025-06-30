@@ -38,6 +38,50 @@ class BlockCirculantMatrixCompression:
             
         return circulant
     
+    def _find_best_circulant_approximation(self, block):
+        """
+        Find the best circulant matrix approximation for a given block.
+        This uses least squares to find the optimal first row.
+        
+        Args:
+            block: The matrix block to approximate
+            
+        Returns:
+            The optimal first row for circulant approximation
+        """
+        n = block.shape[0]
+        if n != block.shape[1]:
+            # Handle non-square blocks by padding
+            max_dim = max(block.shape)
+            padded_block = torch.zeros(max_dim, max_dim, device=block.device, dtype=block.dtype)
+            padded_block[:block.shape[0], :block.shape[1]] = block
+            block = padded_block
+            n = max_dim
+        
+        # Create circulant matrix construction matrix
+        # Each row represents how to construct one row of the circulant matrix from the first row
+        A = torch.zeros(n * n, n, device=block.device, dtype=block.dtype)
+        for i in range(n):
+            for j in range(n):
+                # For circulant matrix, element (i,j) comes from position (j-i) % n of the first row
+                A[i * n + j, (j - i) % n] = 1.0
+        
+        # Flatten the target block
+        b = block.flatten()
+        
+        # Solve least squares: A @ x = b, where x is the optimal first row
+        try:
+            # Use torch.linalg.lstsq for better numerical stability
+            solution = torch.linalg.lstsq(A, b, driver='gels')
+            optimal_first_row = solution.solution[:n]
+        except:
+            # Fallback to pseudo-inverse if lstsq fails
+            A_pinv = torch.pinverse(A)
+            optimal_first_row = A_pinv @ b
+            optimal_first_row = optimal_first_row[:n]
+        
+        return optimal_first_row
+
     def _compress_matrix(self, matrix):
         """
         Compress a matrix using block circulant representation.
@@ -46,7 +90,7 @@ class BlockCirculantMatrixCompression:
             matrix: The weight matrix to compress
             
         Returns:
-            compressed_matrix: A compressed representation (first row of each block)
+            compressed_matrix: A compressed representation (optimal first row of each block)
             original_shape: The original shape of the matrix
         """
         original_shape = matrix.shape
@@ -58,11 +102,11 @@ class BlockCirculantMatrixCompression:
         
         # Pad the matrix if needed
         if padded_rows > rows or padded_cols > cols:
-            padded_matrix = torch.zeros(padded_rows, padded_cols, device=matrix.device)
+            padded_matrix = torch.zeros(padded_rows, padded_cols, device=matrix.device, dtype=matrix.dtype)
             padded_matrix[:rows, :cols] = matrix
             matrix = padded_matrix
         
-        # Extract first row of each block
+        # Extract optimal first row of each block using least squares approximation
         num_blocks_rows = padded_rows // self.block_size
         num_blocks_cols = padded_cols // self.block_size
         compressed_data = []
@@ -71,8 +115,10 @@ class BlockCirculantMatrixCompression:
             for j in range(num_blocks_cols):
                 block = matrix[i*self.block_size:(i+1)*self.block_size, 
                                j*self.block_size:(j+1)*self.block_size]
-                first_row = block[0]
-                compressed_data.append(first_row)
+                
+                # Find the best circulant approximation for this block
+                optimal_first_row = self._find_best_circulant_approximation(block)
+                compressed_data.append(optimal_first_row)
         
         compressed_data = torch.stack(compressed_data)
         

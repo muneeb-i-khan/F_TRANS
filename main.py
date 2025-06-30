@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 import torch
+from transformers import AutoModelForSequenceClassification
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
@@ -55,6 +56,8 @@ Examples:
                         help='Only run FPGA simulation')
     
     # Model parameters
+    parser.add_argument('--model-name', type=str, default='textattack/bert-base-uncased-imdb',
+                        help='Pretrained model name for IMDB classification (default: textattack/bert-base-uncased-imdb)')
     parser.add_argument('--num-layers', type=int, default=6,
                         help='Number of transformer layers (default: 6)')
     parser.add_argument('--hidden-size', type=int, default=512,
@@ -101,36 +104,31 @@ def create_output_directories(base_dir):
 
 
 def run_model_creation(args):
-    """Create the original transformer model."""
+    """Load the pre-trained BERT model for IMDB classification."""
     print("\n" + "="*60)
-    print("STEP 1: CREATING TRANSFORMER MODEL")
+    print("STEP 1: LOADING PRE-TRAINED BERT MODEL")
     print("="*60)
     
-    model_config = {
-        'num_layers': args.num_layers,
-        'hidden_size': args.hidden_size,
-        'num_heads': args.num_heads,
-        'vocab_size': args.vocab_size,
-        'max_seq_length': args.seq_length
-    }
-    
-    print(f"Model configuration: {model_config}")
+    print(f"Loading pre-trained model: {args.model_name}")
+    print("This model is already fine-tuned for IMDB sentiment classification")
     
     start_time = time.time()
-    model = create_bert_like_model(
-        vocab_size=model_config['vocab_size'],
-        hidden_size=model_config['hidden_size'],
-        num_layers=model_config['num_layers'],
-        num_heads=model_config['num_heads'],
-        num_classes=2
+    
+    # Load the pre-trained BERT model
+    model = AutoModelForSequenceClassification.from_pretrained(
+        args.model_name,
+        num_labels=2,
+        output_attentions=False,
+        output_hidden_states=False,
     )
+    
     creation_time = time.time() - start_time
     
     # Save the model
     model_path = os.path.join(args.output_dir, 'models', 'original_model.pth')
     torch.save(model.state_dict(), model_path)
     
-    print(f"✓ Model created successfully in {creation_time:.2f} seconds")
+    print(f"✓ Model loaded successfully in {creation_time:.2f} seconds")
     print(f"✓ Model saved to: {model_path}")
     
     # Print model statistics
@@ -139,6 +137,15 @@ def run_model_creation(args):
     
     print(f"✓ Total parameters: {total_params:,}")
     print(f"✓ Trainable parameters: {trainable_params:,}")
+    
+    # Get actual model configuration from the loaded model
+    config = model.config
+    print(f"✓ Model configuration:")
+    print(f"  - Hidden size: {config.hidden_size}")
+    print(f"  - Number of layers: {config.num_hidden_layers}")
+    print(f"  - Number of attention heads: {config.num_attention_heads}")
+    print(f"  - Vocabulary size: {config.vocab_size}")
+    print(f"  - Max sequence length: {config.max_position_embeddings}")
     
     return model, model_path
 
@@ -186,10 +193,21 @@ def run_platform_comparison(args):
     print("COMPREHENSIVE PLATFORM COMPARISON")
     print("="*60)
     
+    # Load the model to get actual configuration
+    print(f"Loading model configuration from: {args.model_name}")
+    model = AutoModelForSequenceClassification.from_pretrained(
+        args.model_name,
+        num_labels=2,
+        output_attentions=False,
+        output_hidden_states=False,
+    )
+    config = model.config
+    
+    # Use actual model configuration
     model_config = {
-        'num_layers': args.num_layers,
-        'hidden_size': args.hidden_size,
-        'num_heads': args.num_heads,
+        'num_layers': config.num_hidden_layers,
+        'hidden_size': config.hidden_size,
+        'num_heads': config.num_attention_heads,
         'seq_length': args.seq_length,
         'batch_size': args.batch_size
     }
