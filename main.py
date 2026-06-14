@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument('--run-all', action='store_true', help='Run the entire pipeline')
     
     # Model parameters
-    parser.add_argument('--model-name', type=str, default='bert-base-uncased', help='Pretrained model name')
+    parser.add_argument('--model-name', type=str, default='textattack/bert-base-uncased-imdb', help='Pretrained model name')
     parser.add_argument('--block-size', type=int, default=4, help='Block size for BCM compression')
     
     # Simulation parameters
